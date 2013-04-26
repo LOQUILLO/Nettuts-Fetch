@@ -6,6 +6,7 @@ import os
 import sys
 import threading
 import zipfile
+import tarfile
 import re
 import subprocess
 
@@ -249,6 +250,122 @@ class FetchDownload(threading.Thread):
             err = '%s: URL error %s contacting API' % (__name__, str(e.reason))
             sublime.error_message(err)
 
+    def extract_package(self, package):
+        if zipfile.is_zipfile(package):
+            self.extract_zip(package)
+        elif tarfile.is_tarfile(package):
+            self.extract_tar(package)
+
+    def extract_zip(self, package):
+        pkg = zipfile.ZipFile(package, 'r')
+
+        root_level_paths = []
+        last_path = None
+        for path in pkg.namelist():
+            last_path = path
+            if path.find('/') in [len(path) - 1, -1]:
+                root_level_paths.append(path)
+            if path[0] == '/' or path.find('..') != -1:
+                sublime.error_message(__name__ +
+                    ': Unable to extract package due to unsafe' +
+                    ' filename on one or more files.')
+                return False
+
+        if last_path and len(root_level_paths) == 0:
+            root_level_paths.append(
+                last_path[0:last_path.find('/') + 1])
+
+        os.chdir(self.location)
+
+        skip_root_dir = len(root_level_paths) == 1 and \
+            root_level_paths[0].endswith('/')
+        for path in pkg.namelist():
+            dest = path
+            if os.name == 'nt':
+                regex = ':|\*|\?|"|<|>|\|'
+                if re.search(regex, dest) != None:
+                    print ('%s: Skipping file from package named %s' +
+                        ' due to an invalid filename') % (__name__,
+                                                          path)
+                    continue
+            regex = '[\x00-\x1F\x7F-\xFF]'
+            if re.search(regex, dest) != None:
+                dest = dest.decode('utf-8')
+
+            if skip_root_dir:
+                dest = dest[len(root_level_paths[0]):]
+            dest = os.path.join(self.location, dest)
+            if path.endswith('/'):
+                if not os.path.exists(dest):
+                    os.makedirs(dest)
+            else:
+                dest_dir = os.path.dirname(dest)
+                if not os.path.exists(dest_dir):
+                    os.makedirs(dest_dir)
+                try:
+                    open(dest, 'wb').write(pkg.read(path))
+                except (IOError, UnicodeDecodeError):
+                    print ('%s: Skipping file from package named %s' +
+                        ' due to an invalid filename') % (__name__,
+                                                          path)
+
+        pkg.close()
+        os.remove(package)
+        self.result = True
+
+    def extract_tar(self, package):
+        pkg = tarfile.open(package, 'r:*')
+        memberlist = pkg.getmembers();
+
+        root_level_paths = []
+        last_path = None
+        for tarinfo in memberlist:
+            path = tarinfo.name
+            last_path = path
+            if path.find('/') in [len(path) - 1, -1]:
+                root_level_paths.append(path)
+            if path[0] == '/' or path.find('..') != -1:
+                sublime.error_message(__name__ + ': Unable to extract package due to unsafe filename on one or more files.')
+                return False
+
+        if last_path and len(root_level_paths) == 0:
+            root_level_paths.append(last_path[0:last_path.find('/') + 1])
+
+        os.chdir(self.location)
+
+        skip_root_dir = len(root_level_paths) == 1
+
+        for tarinfo in memberlist:
+            path = tarinfo.name
+            dest = path
+            if os.name == 'nt':
+                regex = ':|\*|\?|"|<|>|\|'
+                if re.search(regex, dest) != None:
+                    print ('%s: Skipping file from package named %s' + ' due to an invalid filename') % (__name__, path)
+                    continue
+            regex = '[\x00-\x1F\x7F-\xFF]'
+            if re.search(regex, dest) != None:
+                dest = dest.decode('utf-8')
+
+            if skip_root_dir:
+                dest = dest[len(root_level_paths[0])+1:]
+            dest = os.path.join(self.location, dest)
+            dest_dir = os.path.dirname(dest)
+
+            if not os.path.exists(dest_dir):
+                os.makedirs(dest_dir)
+
+            if tarinfo.isfile():
+                try:
+                    open(dest, 'wb').write(tarinfo.tobuf())
+                except IOError as e:
+                    print "I/O error({0}): {1}".format(e.errno, e.strerror)
+                except UnicodeDecodeError as e:
+                    print "Unicode decode error({0}): {1}".format(e.errno, e.strerror)
+        pkg.close()
+        os.remove(package)
+        self.result = True
+
     def download_package(self):
         downloaded = False
         try:
@@ -287,61 +404,7 @@ class FetchDownload(threading.Thread):
                 return False
 
             else:
-                pkg = zipfile.ZipFile(finalLocation, 'r')
-
-                root_level_paths = []
-                last_path = None
-                for path in pkg.namelist():
-                    last_path = path
-                    if path.find('/') in [len(path) - 1, -1]:
-                        root_level_paths.append(path)
-                    if path[0] == '/' or path.find('..') != -1:
-                        sublime.error_message(__name__ +
-                            ': Unable to extract package due to unsafe' +
-                            ' filename on one or more files.')
-                        return False
-
-                if last_path and len(root_level_paths) == 0:
-                    root_level_paths.append(
-                        last_path[0:last_path.find('/') + 1])
-
-                os.chdir(self.location)
-
-                skip_root_dir = len(root_level_paths) == 1 and \
-                    root_level_paths[0].endswith('/')
-                for path in pkg.namelist():
-                    dest = path
-                    if os.name == 'nt':
-                        regex = ':|\*|\?|"|<|>|\|'
-                        if re.search(regex, dest) != None:
-                            print ('%s: Skipping file from package named %s' +
-                                ' due to an invalid filename') % (__name__,
-                                                                  path)
-                            continue
-                    regex = '[\x00-\x1F\x7F-\xFF]'
-                    if re.search(regex, dest) != None:
-                        dest = dest.decode('utf-8')
-
-                    if skip_root_dir:
-                        dest = dest[len(root_level_paths[0]):]
-                    dest = os.path.join(self.location, dest)
-                    if path.endswith('/'):
-                        if not os.path.exists(dest):
-                            os.makedirs(dest)
-                    else:
-                        dest_dir = os.path.dirname(dest)
-                        if not os.path.exists(dest_dir):
-                            os.makedirs(dest_dir)
-                        try:
-                            open(dest, 'wb').write(pkg.read(path))
-                        except (IOError, UnicodeDecodeError):
-                            print ('%s: Skipping file from package named %s' +
-                                ' due to an invalid filename') % (__name__,
-                                                                  path)
-
-                pkg.close()
-                os.remove(finalLocation)
-                self.result = True
+                self.extract_package(finalLocation)
 
             return
 
