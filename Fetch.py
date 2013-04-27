@@ -357,7 +357,7 @@ class FetchDownload(threading.Thread):
 
             if tarinfo.isfile():
                 try:
-                    open(dest, 'wb').write(tarinfo.tobuf())
+                    open(dest, 'wb').write(pkg.extractfile(tarinfo).read())
                 except IOError as e:
                     print "I/O error({0}): {1}".format(e.errno, e.strerror)
                 except UnicodeDecodeError as e:
