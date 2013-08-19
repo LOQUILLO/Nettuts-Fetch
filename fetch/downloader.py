@@ -215,9 +215,9 @@ class Downloader(threading.Thread):
                 try:
                     open(dest, 'wb').write(pkg.extractfile(tarinfo).read())
                 except IOError as e:
-                    print "I/O error({0}): {1}".format(e.errno, e.strerror)
+                    print(('I/O error(%s): %s') % (e.errno, e.strerror))
                 except UnicodeDecodeError as e:
-                    print "Unicode decode error({0}): {1}".format(e.errno, e.strerror)
+                    print(('Unicode decode error(%s): %s') % (e.errno, e.strerror))
         pkg.close()
         os.remove(package)
         self.result = True
